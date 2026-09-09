@@ -23,6 +23,7 @@ import { ArtworkGallery } from './components/ArtworkGallery';
 import { SystemInstructionModal } from './components/SystemInstructionModal';
 import { LearningHistoryModal } from './components/LearningHistoryModal';
 import { CelebrationToast } from './components/CelebrationToast';
+import { SystemStatusModal } from './components/SystemStatusModal';
 import { playZenBell, playWarmChime } from './utils/audio';
 import { fireWatercolorConfetti } from './utils/celebration';
 import { safeApiPost, checkSystemHealth, isOnline } from './utils/apiClient';
@@ -122,6 +123,7 @@ export default function App() {
   const [showGallery, setShowGallery] = useState(false);
   const [showSystemInstruction, setShowSystemInstruction] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showSystemStatus, setShowSystemStatus] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [mobileTab, setMobileTab] = useState<'lesson' | 'chat'>('lesson');
   const [celebrationToast, setCelebrationToast] = useState<{
@@ -141,7 +143,6 @@ export default function App() {
     api: { available: boolean; evaluationEndpoint: boolean };
     firestore: { connected: boolean; databaseId: string };
   } | null>(null);
-  const [showSystemStatus, setShowSystemStatus] = useState(false);
 
   // Helper to add activity log item
   const addActivityLog = useCallback(
@@ -772,91 +773,6 @@ export default function App() {
         </div>
       )}
 
-      {/* System Status Modal */}
-      {showSystemStatus && systemStatus && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
-          <div className="bg-[#FAF7F2] border border-[#E9E3D5] rounded-3xl max-w-md w-full shadow-2xl p-6 relative">
-            <button
-              type="button"
-              onClick={() => setShowSystemStatus(false)}
-              className="absolute top-5 right-5 p-2 rounded-full text-[#737365] hover:text-[#2C2C2C] hover:bg-[#E9E3D5]/50 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="mb-4 pr-8">
-              <h2 className="font-serif italic font-bold text-xl text-[#5A5A40]">
-                🛠️ สถานะระบบ
-              </h2>
-              <p className="text-xs text-[#737365] mt-0.5">
-                ตรวจสอบการทำงานของระบบทั้งหมด
-              </p>
-            </div>
-
-            <div className="space-y-3 text-sm">
-              {/* Online Status */}
-              <div className="flex items-center justify-between">
-                <span className="text-[#5A5A40]">การเชื่อมต่ออินเทอร์เน็ต</span>
-                <span className={`flex items-center gap-1.5 ${systemStatus.online ? 'text-green-700' : 'text-amber-700'}`}>
-                  {systemStatus.online ? <Check className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
-                  {systemStatus.online ? 'ออนไลน์' : 'ออฟไลน์'}
-                </span>
-              </div>
-
-              {/* API Status */}
-              <div className="flex items-center justify-between">
-                <span className="text-[#5A5A40]">ระบบ AI ประเมินผล</span>
-                <span className={`flex items-center gap-1.5 ${systemStatus.api.evaluationEndpoint ? 'text-green-700' : 'text-amber-700'}`}>
-                  {systemStatus.api.evaluationEndpoint ? <Check className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-                  {systemStatus.api.evaluationEndpoint ? 'พร้อมใช้งาน' : 'โหมดออฟไลน์'}
-                </span>
-              </div>
-
-              {/* Storage Status */}
-              <div className="flex items-center justify-between">
-                <span className="text-[#5A5A40]">การจัดเก็บข้อมูล</span>
-                <span className={`flex items-center gap-1.5 ${systemStatus.storage.indexedDB ? 'text-green-700' : 'text-amber-700'}`}>
-                  {systemStatus.storage.indexedDB ? <Check className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-                  {systemStatus.storage.indexedDB ? 'พร้อม' : 'มีปัญหา'}
-                </span>
-              </div>
-
-              {/* Cloud Sync Status */}
-              <div className="flex items-center justify-between">
-                <span className="text-[#5A5A40]">การซิงค์คลาวด์</span>
-                <span className={`flex items-center gap-1.5 ${systemStatus.firestore.connected ? 'text-green-700' : 'text-amber-700'}`}>
-                  {systemStatus.firestore.connected ? <Check className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
-                  {systemStatus.firestore.connected ? 'เชื่อมต่อแล้ว' : 'ไม่เชื่อมต่อ'}
-                </span>
-              </div>
-
-              {/* Recommendations */}
-              {(!systemStatus.online || !systemStatus.api.evaluationEndpoint || !systemStatus.storage.indexedDB) && (
-                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-                  <p className="font-semibold mb-1">📝 คำแนะนำ:</p>
-                  <ul className="list-disc list-inside space-y-0.5">
-                    {!systemStatus.online && <li>ผลงานจะถูกบันทึกเฉพาะในอุปกรณ์นี้</li>}
-                    {!systemStatus.api.evaluationEndpoint && <li>ใช้โหมดประเมินผลแบบออฟไลน์</li>}
-                    {!systemStatus.firestore.connected && <li>ผลงานจะไม่ถูกซิงค์ไปยังคลาวด์</li>}
-                  </ul>
-                </div>
-              )}
-
-              {/* Action Button */}
-              <div className="pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowSystemStatus(false)}
-                  className="w-full py-2.5 text-xs font-semibold text-white bg-[#5A5A40] hover:bg-[#464632] rounded-xl shadow-2xs transition-colors"
-                >
-                  ปิดหน้าต่าง
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Workspace Layout */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden max-w-7xl w-full mx-auto">
         {/* Left: Course Curriculum Sidebar */}
@@ -986,6 +902,12 @@ export default function App() {
       <SystemInstructionModal
         isOpen={showSystemInstruction}
         onClose={() => setShowSystemInstruction(false)}
+      />
+
+      <SystemStatusModal
+        isOpen={showSystemStatus}
+        onClose={() => setShowSystemStatus(false)}
+        status={systemStatus}
       />
 
       {celebrationToast && (
