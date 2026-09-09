@@ -25,8 +25,15 @@ import { LearningHistoryModal } from './components/LearningHistoryModal';
 import { CelebrationToast } from './components/CelebrationToast';
 import { playZenBell, playWarmChime } from './utils/audio';
 import { fireWatercolorConfetti } from './utils/celebration';
-import { safeApiPost } from './utils/apiClient';
-import { safeGetStorage, safeSetStorage, safeRemoveStorage } from './utils/storage';
+import { safeApiPost, checkSystemHealth, isOnline } from './utils/apiClient';
+import { 
+  safeGetStorage, 
+  safeSetStorage, 
+  safeRemoveStorage,
+  uploadImagesToFirebaseStorage,
+  saveFullSubmission,
+  checkStorageHealth
+} from './utils/storage';
 import {
   getAllSubmissionsFromIdb,
   saveSingleSubmissionToIdb,
@@ -39,11 +46,13 @@ import {
   loadSubmissionsFromFirestore,
   saveProgressToFirestore,
   loadProgressFromFirestore,
+  getFirestoreStatus,
 } from './lib/firebase';
+import { initializeSystemCheck } from './utils/systemStatus';
 import type { User } from 'firebase/auth';
 import { getSampleKeyForLesson } from './data/lessonEvaluations';
 import { getSampleArtworkDataUrl } from './data/sampleArtworks';
-import { BookOpen, MessageSquare, Sparkles, ChevronRight, History } from 'lucide-react';
+import { BookOpen, MessageSquare, Sparkles, ChevronRight, History, AlertCircle, Check, CloudOff, WifiOff } from 'lucide-react';
 
 const DEFAULT_PROFILE: UserProfile = {
   name: '',
@@ -126,6 +135,13 @@ export default function App() {
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [cloudStatus, setCloudStatus] = useState<'synced' | 'connecting' | 'offline'>('connecting');
+  const [systemStatus, setSystemStatus] = useState<{
+    online: boolean;
+    storage: { localStorage: boolean; indexedDB: boolean; firebaseStorage: boolean };
+    api: { available: boolean; evaluationEndpoint: boolean };
+    firestore: { connected: boolean; databaseId: string };
+  } | null>(null);
+  const [showSystemStatus, setShowSystemStatus] = useState(false);
 
   // Helper to add activity log item
   const addActivityLog = useCallback(
@@ -175,6 +191,21 @@ export default function App() {
     safeSetStorage('watercolor_mentor_chat', messages);
     setLastSavedAt(Date.now());
   }, [messages]);
+
+  // Initialize system check
+  useEffect(() => {
+    initializeSystemCheck().then(() => {
+      // Check system status periodically
+      checkSystemHealth().then(health => {
+        setSystemStatus({
+          online: health.online,
+          storage: { localStorage: true, indexedDB: true, firebaseStorage: false },
+          api: health,
+          firestore: { connected: false, databaseId: '(default)' }
+        });
+      });
+    });
+  }, []);
 
   // Synchronize and load full submissions from IndexedDB (overcomes browser localStorage 5MB quota)
   useEffect(() => {
@@ -236,6 +267,14 @@ export default function App() {
       if (user) {
         setCloudStatus('synced');
 
+        // 🔥 Update system status with Firestore connection
+        const firestoreStatus = await getFirestoreStatus();
+        setSystemStatus(prev => prev ? {
+          ...prev,
+          firestore: firestoreStatus,
+          storage: { ...prev.storage, firebaseStorage: firestoreStatus.connected }
+        } : null);
+
         // Sync cloud progress
         try {
           const cloudProgress = await loadProgressFromFirestore(user.uid);
@@ -287,6 +326,13 @@ export default function App() {
         } catch (e) {
           console.warn('[Firebase] Could not restore cloud submissions:', e);
         }
+      } else {
+        // No user, update system status
+        setSystemStatus(prev => prev ? {
+          ...prev,
+          firestore: { connected: false, databaseId: '(default)' },
+          storage: { ...prev.storage, firebaseStorage: false }
+        } : null);
       }
     });
 
@@ -301,6 +347,8 @@ export default function App() {
     if (firebaseUser?.uid) {
       saveProgressToFirestore(firebaseUser.uid, currentLessonId, completedLessons).catch((err) => {
         console.warn('[Firebase] Auto-sync progress error:', err);
+        // If sync fails, update cloud status to offline
+        setCloudStatus('offline');
       });
     }
   }, [firebaseUser, currentLessonId, completedLessons]);
@@ -411,6 +459,11 @@ export default function App() {
     });
 
     try {
+      // 🔥 Check if online before sending
+      if (!isOnline()) {
+        throw new Error('อุปกรณ์ออฟไลน์อยู่ ระบบใช้โหมดแชทออฟไลน์');
+      }
+
       const data = await safeApiPost<{ message: string }>('/api/chat', {
         messages: newMessages.slice(-10), // Send last 10 messages for context
         currentLessonId,
@@ -428,10 +481,14 @@ export default function App() {
       if (soundEnabled) playWarmChime();
     } catch (err: any) {
       console.error('[Chat Send Error]', err);
+      
+      // 🔥 Create helpful offline response if API fails
       const errorMsg: ChatMessage = {
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: err?.message || 'ขออภัยครับ เกิดข้อขัดข้องชั่วคราวในการเชื่อมต่อกับครู กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะครับ',
+        content: err?.message.includes('ออฟไลน์') 
+          ? `ครูกำลังใช้โหมดออฟไลน์นะครับ! 🎨\n\nสำหรับบทเรียนนี้ (${currentLesson.thaiTitle}) ครูแนะนำให้ลอง:\n\n1. **ฝึก ${currentLesson.homework.title}**\n2. **ทดลอง ${currentLesson.concepts?.[0]?.title || 'เทคนิคพื้นฐาน'}**\n3. **บันทึกผลงานและคำถามไว้** เพื่อปรึกษาครูเมื่อกลับมาออนไลน์\n\n✨ ครูเชื่อว่าคุณทำได้แน่นอน!`
+          : 'ขออภัยครับ เกิดข้อขัดข้องชั่วคราวในการเชื่อมต่อกับครู กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะครับ',
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -456,7 +513,7 @@ export default function App() {
     const primaryImage = images[0];
 
     const newSubmission: Submission = {
-      id: `sub-${Date.now()}`,
+      id: `sub-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       lessonId: numLessonId,
       imageUrl: primaryImage,
       imageUrls: images,
@@ -470,16 +527,49 @@ export default function App() {
       createdAt: Date.now(),
     };
 
-    // Immediately persist real uncompressed evaluation and images into IndexedDB master store
+    // 🔥 Immediately persist real uncompressed evaluation and images into IndexedDB master store
     saveSingleSubmissionToIdb(newSubmission).catch((err) => {
       console.warn('[Storage] Immediate IndexedDB save error:', err);
     });
 
-    // Save to Cloud Firestore (asia-east1)
+    // 🔥 Save to Cloud Firestore (asia-east1)
     if (firebaseUser?.uid) {
-      saveSubmissionToFirestore(firebaseUser.uid, newSubmission).catch((err) => {
+      saveSubmissionToFirestore(firebaseUser.uid, newSubmission).then(success => {
+        if (success) {
+          console.log('✅ Successfully saved to Firestore');
+          setCloudStatus('synced');
+        } else {
+          console.warn('⚠️ Firestore save failed, keeping offline');
+          setCloudStatus('offline');
+        }
+      }).catch((err) => {
         console.warn('[Firebase] Cloud Firestore submission save error:', err);
+        setCloudStatus('offline');
       });
+    }
+
+    // 🔥 Upload images to Firebase Storage (if available)
+    if (firebaseUser?.uid && images.length > 0) {
+      uploadImagesToFirebaseStorage(images, firebaseUser.uid, numLessonId)
+        .then(storageUrls => {
+          if (storageUrls.length > 0) {
+            console.log(`✅ Uploaded ${storageUrls.length} images to Firebase Storage`);
+            // Update submission with storage URLs
+            newSubmission.imageUrl = storageUrls[0];
+            newSubmission.imageUrls = storageUrls;
+            newSubmission.evaluation.imageUrl = storageUrls[0];
+            newSubmission.evaluation.imageUrls = storageUrls;
+            
+            // Update in state
+            setSubmissions(prev => {
+              const filtered = prev.filter((s) => Number(s.lessonId) !== numLessonId);
+              return [...filtered, newSubmission];
+            });
+          }
+        })
+        .catch(err => {
+          console.warn('Firebase Storage upload failed, using base64:', err);
+        });
     }
 
     // Update submissions (replace previous if exists for this lesson)
@@ -541,12 +631,12 @@ export default function App() {
         evaluation.passed ? '✅ ผ่านบทเรียนนี้แล้ว!' : '🔁 ควรฝึกซ้ำอีกนิดเพื่อความมั่นใจ'
       }\n\n${evaluation.nextStepsOrRetryPlan}`,
       timestamp: Date.now(),
-      imageUrl,
+      imageUrl: primaryImage,
       imageUrls: images,
       evaluation: {
         ...evaluation,
         lessonId: numLessonId,
-        imageUrl,
+        imageUrl: primaryImage,
         imageUrls: images,
       },
     };
@@ -628,6 +718,29 @@ export default function App() {
     setShowOnboarding(true);
   };
 
+  // 🔥 Function to check system status
+  const checkAndShowSystemStatus = async () => {
+    try {
+      const [storageHealth, apiHealth, firestoreStatus] = await Promise.all([
+        checkStorageHealth(),
+        checkSystemHealth(),
+        getFirestoreStatus(),
+      ]);
+
+      const status = {
+        online: apiHealth.online,
+        storage: storageHealth,
+        api: apiHealth,
+        firestore: firestoreStatus,
+      };
+
+      setSystemStatus(status);
+      setShowSystemStatus(true);
+    } catch (error) {
+      console.error('Failed to check system status:', error);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#FDFBF7] text-[#2C2C2C] flex flex-col font-sans selection:bg-[#FFE8D6] selection:text-[#D9A066]">
       {/* Top Navbar */}
@@ -642,7 +755,107 @@ export default function App() {
         onToggleSound={() => setSoundEnabled((prev) => !prev)}
         lastSavedAt={lastSavedAt}
         cloudStatus={cloudStatus}
+        onCheckSystemStatus={checkAndShowSystemStatus}
       />
+
+      {/* System Status Banner */}
+      {!isOnline() && (
+        <div className="bg-amber-100 border-b border-amber-300 text-amber-900 px-4 py-2 text-xs flex items-center justify-center gap-2">
+          <WifiOff className="w-3.5 h-3.5" />
+          <span className="font-medium">คุณกำลังใช้อุปกรณ์ในโหมดออฟไลน์</span>
+          <button 
+            onClick={checkAndShowSystemStatus}
+            className="text-amber-700 hover:text-amber-900 underline text-xs ml-2"
+          >
+            ตรวจสอบสถานะ
+          </button>
+        </div>
+      )}
+
+      {/* System Status Modal */}
+      {showSystemStatus && systemStatus && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
+          <div className="bg-[#FAF7F2] border border-[#E9E3D5] rounded-3xl max-w-md w-full shadow-2xl p-6 relative">
+            <button
+              type="button"
+              onClick={() => setShowSystemStatus(false)}
+              className="absolute top-5 right-5 p-2 rounded-full text-[#737365] hover:text-[#2C2C2C] hover:bg-[#E9E3D5]/50 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="mb-4 pr-8">
+              <h2 className="font-serif italic font-bold text-xl text-[#5A5A40]">
+                🛠️ สถานะระบบ
+              </h2>
+              <p className="text-xs text-[#737365] mt-0.5">
+                ตรวจสอบการทำงานของระบบทั้งหมด
+              </p>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              {/* Online Status */}
+              <div className="flex items-center justify-between">
+                <span className="text-[#5A5A40]">การเชื่อมต่ออินเทอร์เน็ต</span>
+                <span className={`flex items-center gap-1.5 ${systemStatus.online ? 'text-green-700' : 'text-amber-700'}`}>
+                  {systemStatus.online ? <Check className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
+                  {systemStatus.online ? 'ออนไลน์' : 'ออฟไลน์'}
+                </span>
+              </div>
+
+              {/* API Status */}
+              <div className="flex items-center justify-between">
+                <span className="text-[#5A5A40]">ระบบ AI ประเมินผล</span>
+                <span className={`flex items-center gap-1.5 ${systemStatus.api.evaluationEndpoint ? 'text-green-700' : 'text-amber-700'}`}>
+                  {systemStatus.api.evaluationEndpoint ? <Check className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                  {systemStatus.api.evaluationEndpoint ? 'พร้อมใช้งาน' : 'โหมดออฟไลน์'}
+                </span>
+              </div>
+
+              {/* Storage Status */}
+              <div className="flex items-center justify-between">
+                <span className="text-[#5A5A40]">การจัดเก็บข้อมูล</span>
+                <span className={`flex items-center gap-1.5 ${systemStatus.storage.indexedDB ? 'text-green-700' : 'text-amber-700'}`}>
+                  {systemStatus.storage.indexedDB ? <Check className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                  {systemStatus.storage.indexedDB ? 'พร้อม' : 'มีปัญหา'}
+                </span>
+              </div>
+
+              {/* Cloud Sync Status */}
+              <div className="flex items-center justify-between">
+                <span className="text-[#5A5A40]">การซิงค์คลาวด์</span>
+                <span className={`flex items-center gap-1.5 ${systemStatus.firestore.connected ? 'text-green-700' : 'text-amber-700'}`}>
+                  {systemStatus.firestore.connected ? <Check className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
+                  {systemStatus.firestore.connected ? 'เชื่อมต่อแล้ว' : 'ไม่เชื่อมต่อ'}
+                </span>
+              </div>
+
+              {/* Recommendations */}
+              {(!systemStatus.online || !systemStatus.api.evaluationEndpoint || !systemStatus.storage.indexedDB) && (
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                  <p className="font-semibold mb-1">📝 คำแนะนำ:</p>
+                  <ul className="list-disc list-inside space-y-0.5">
+                    {!systemStatus.online && <li>ผลงานจะถูกบันทึกเฉพาะในอุปกรณ์นี้</li>}
+                    {!systemStatus.api.evaluationEndpoint && <li>ใช้โหมดประเมินผลแบบออฟไลน์</li>}
+                    {!systemStatus.firestore.connected && <li>ผลงานจะไม่ถูกซิงค์ไปยังคลาวด์</li>}
+                  </ul>
+                </div>
+              )}
+
+              {/* Action Button */}
+              <div className="pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSystemStatus(false)}
+                  className="w-full py-2.5 text-xs font-semibold text-white bg-[#5A5A40] hover:bg-[#464632] rounded-xl shadow-2xs transition-colors"
+                >
+                  ปิดหน้าต่าง
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Workspace Layout */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden max-w-7xl w-full mx-auto">
