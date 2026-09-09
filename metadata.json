@@ -1,0 +1,10 @@
+{
+  "name": "ครูสอนสีน้ำสำหรับผู้เริ่มต้น (Watercolor Mentor)",
+  "description": "ระบบเรียนรู้และติวเตอร์สีน้ำ AI ส่วนตัวสำหรับผู้เริ่มต้น พร้อมระบบตรวจผลงานทีละขั้นตอน (Checkpoint Protocol)",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

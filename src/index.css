@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #FDFBF7;
+  --ink: #2C2C2C;
+  --olive: #5A5A40;
+  --olive-dark: #464632;
+  --olive-light: #737357;
+  --sand: #E9E3D5;
+  --sand-light: #FAF7F2;
+  --sand-card: #F4EFE6;
+  --accent: #D9A066;
+  --accent-dark: #C2874C;
+  --accent-light: #FFE8D6;
+  --sage-light: #E9F5DB;
+}
+
+@layer base {
+  body {
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: 'Bai Jamjuree', 'Prompt', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  h1, h2, h3, .font-serif {
+    font-family: 'Georgia', 'Playfair Display', 'Prompt', serif;
+  }
+}
+
+/* Subtle Geometric Balance scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(90, 90, 64, 0.2);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(90, 90, 64, 0.4);
+}
+
