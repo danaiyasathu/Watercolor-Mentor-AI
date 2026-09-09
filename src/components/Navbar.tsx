@@ -15,6 +15,7 @@ import {
   Cloud,
   CloudOff,
   AlertCircle,
+  X, // 🔥 เพิ่ม import X ที่หายไป
 } from 'lucide-react';
 import { COURSE_LESSONS } from '../data/courseData';
 
@@ -29,7 +30,7 @@ interface NavbarProps {
   onToggleSound: () => void;
   lastSavedAt: number;
   cloudStatus?: 'synced' | 'connecting' | 'offline';
-  onCheckSystemStatus?: () => void; // 🔥 เพิ่ม prop ใหม่
+  onCheckSystemStatus?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -43,12 +44,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleSound,
   lastSavedAt,
   cloudStatus = 'synced',
-  onCheckSystemStatus, // 🔥 เพิ่ม prop ใหม่
+  onCheckSystemStatus,
 }) => {
   const currentLesson = COURSE_LESSONS.find((l) => l.id === currentLessonId) || COURSE_LESSONS[0];
   const progressPercent = Math.round((completedLessons.length / COURSE_LESSONS.length) * 100);
 
-  // 🔥 ฟังก์ชันฟอร์แมตเวลาที่บันทึกล่าสุด
+  // ฟังก์ชันฟอร์แมตเวลาที่บันทึกล่าสุด
   const formatTimeSinceSaved = (timestamp: number) => {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
     
@@ -58,7 +59,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     return `${Math.floor(seconds / 86400)} วันที่แล้ว`;
   };
 
-  // 🔥 ไอคอนสถานะคลาวด์
+  // ไอคอนสถานะคลาวด์
   const getCloudIcon = () => {
     switch (cloudStatus) {
       case 'synced':
@@ -72,7 +73,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
-  // 🔥 ข้อความสถานะคลาวด์
+  // ข้อความสถานะคลาวด์
   const getCloudStatusText = () => {
     switch (cloudStatus) {
       case 'synced':
@@ -86,7 +87,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
-  // 🔥 สีสถานะคลาวด์
+  // สีสถานะคลาวด์
   const getCloudStatusColor = () => {
     switch (cloudStatus) {
       case 'synced':
@@ -100,7 +101,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
-  // 🔥 สถานะบันทึกข้อมูลล่าสุด
+  // สถานะบันทึกข้อมูลล่าสุด
   const isRecentlySaved = Date.now() - lastSavedAt < 30000; // 30 วินาที
 
   return (
@@ -147,7 +148,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <span className="text-[#E9E3D5]">|</span>
           
-          {/* 🔥 Cloud Status with Improved UI */}
+          {/* Cloud Status with Improved UI */}
           <button
             type="button"
             onClick={onCheckSystemStatus}
@@ -166,7 +167,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
-          {/* 🔥 Last Saved Indicator */}
+          {/* Last Saved Indicator */}
           <div className="flex items-center gap-1.5 text-[10px] text-[#737365]">
             <span className="text-[#E9E3D5]">|</span>
             <div className="flex items-center gap-1">
@@ -191,7 +192,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {soundEnabled ? <Volume2 className="w-4 h-4 text-[#5A5A40]" /> : <VolumeX className="w-4 h-4 text-[#888877]" />}
           </button>
 
-          {/* 🔥 System Status Check Button */}
+          {/* System Status Check Button */}
           {onCheckSystemStatus && (
             <button
               type="button"
@@ -256,7 +257,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      {/* 🔥 Mobile View: Simplified Progress Bar */}
+      {/* Mobile View: Simplified Progress Bar */}
       <div className="md:hidden mt-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1">
@@ -272,7 +273,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
           
-          {/* 🔥 Mobile Cloud Status */}
+          {/* Mobile Cloud Status */}
           <button
             type="button"
             onClick={onCheckSystemStatus}
