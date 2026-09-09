@@ -2,11 +2,13 @@
  * Safe storage wrapper with dual-layer persistence:
  * 1. LocalStorage with automatic compression and quota-proofing
  * 2. IndexedDB for large image payloads and permanent durability
+ * 3. Firebase Storage for cloud backup
  */
 
 import { saveSubmissionsToIdb } from './indexedDb';
 import { Submission } from '../types';
 import { getSampleArtworkDataUrl } from '../data/sampleArtworks';
+import { getStorage, ref, uploadString, getDownloadURL } from 'firebase/storage';
 
 function getSampleKeyForLessonNum(lessonId: number): 'flat_wash' | 'wet_on_wet' | 'shapes' | 'color_wheel' | 'landscape' | 'composition' | 'capstone' {
   switch (lessonId) {
@@ -21,6 +23,256 @@ function getSampleKeyForLessonNum(lessonId: number): 'flat_wash' | 'wet_on_wet' 
   }
 }
 
+// 🔥 ฟังก์ชันใหม่: อัปโหลดภาพไปยัง Firebase Storage
+export async function uploadImagesToFirebaseStorage(
+  images: string[], 
+  userId: string, 
+  lessonId: number
+): Promise<string[]> {
+  try {
+    // ตรวจสอบว่า Firebase พร้อมใช้งาน
+    const { initializeApp, getApps } = await import('firebase/app');
+    const apps = getApps();
+    if (apps.length === 0) {
+      console.warn('Firebase not initialized, skipping storage upload');
+      return [];
+    }
+
+    const storage = getStorage();
+    const timestamp = Date.now();
+    const urls: string[] = [];
+
+    for (let i = 0; i < images.length; i++) {
+      const imageData = images[i];
+      
+      if (!imageData || typeof imageData !== 'string') {
+        console.warn(`Image ${i} is invalid, skipping`);
+        continue;
+      }
+      
+      // ตรวจสอบว่าเป็น base64 data URL หรือไม่
+      let cleanBase64 = imageData;
+      if (imageData.startsWith('data:image')) {
+        const parts = imageData.split(',');
+        if (parts.length === 2) {
+          cleanBase64 = parts[1];
+        }
+      }
+
+      // ตรวจสอบขนาด base64
+      if (cleanBase64.length > 10 * 1024 * 1024) { // 10MB limit
+        console.warn(`Image ${i} too large (${cleanBase64.length} bytes), skipping`);
+        continue;
+      }
+
+      // สร้าง path ที่ unique
+      const filePath = `submissions/${userId || 'anonymous'}/lesson-${lessonId}/${timestamp}-${i}.jpg`;
+      const storageRef = ref(storage, filePath);
+
+      try {
+        // อัปโหลดเป็น base64 string
+        await uploadString(storageRef, cleanBase64, 'base64', {
+          contentType: 'image/jpeg',
+          customMetadata: {
+            userId: userId || 'anonymous',
+            lessonId: String(lessonId),
+            index: String(i),
+            uploadedAt: String(timestamp),
+            source: 'watercolor-mentor',
+          },
+        });
+
+        // ดึง download URL
+        const downloadURL = await getDownloadURL(storageRef);
+        urls.push(downloadURL);
+        
+        console.log(`✅ Uploaded image ${i+1} to Firebase Storage: ${filePath}`);
+      } catch (uploadError) {
+        console.error(`Failed to upload image ${i}:`, uploadError);
+      }
+    }
+
+    return urls;
+  } catch (error) {
+    console.error('Firebase Storage upload failed:', error);
+    // Return empty array to allow fallback to base64
+    return [];
+  }
+}
+
+// 🔥 ฟังก์ชันใหม่: บันทึก submission แบบเต็ม
+export async function saveFullSubmission(
+  evaluation: any,
+  userNotes: string,
+  imageData: string[]
+): Promise<boolean> {
+  try {
+    // สร้าง submission object
+    const submission: Submission = {
+      id: `${evaluation.lessonId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      lessonId: evaluation.lessonId,
+      imageUrl: imageData[0] || evaluation.imageUrl || '',
+      imageUrls: imageData.length > 0 ? imageData : evaluation.imageUrls || [],
+      userNotes: userNotes || '',
+      evaluation: {
+        lessonId: evaluation.lessonId,
+        passed: Boolean(evaluation.passed),
+        praise: evaluation.praise || '',
+        improvementPoints: Array.isArray(evaluation.improvementPoints) 
+          ? evaluation.improvementPoints 
+          : [],
+        decisionSummary: evaluation.decisionSummary || '',
+        nextStepsOrRetryPlan: evaluation.nextStepsOrRetryPlan || '',
+        mentorFullMessage: evaluation.mentorFullMessage || '',
+        timestamp: evaluation.timestamp || Date.now(),
+        imageUrl: imageData[0] || evaluation.imageUrl || '',
+        imageUrls: imageData.length > 0 ? imageData : evaluation.imageUrls || [],
+      },
+      createdAt: evaluation.timestamp || Date.now(),
+    };
+
+    // 1. บันทึกลง IndexedDB
+    try {
+      await saveSubmissionsToIdb([submission]);
+      console.log('✅ Saved to IndexedDB');
+    } catch (idbError) {
+      console.warn('IndexedDB save failed:', idbError);
+      // ยังดำเนินการต่อ
+    }
+
+    // 2. บันทึกลง localStorage (metadata only)
+    try {
+      const existing = safeGetStorage<Submission[]>('watercolor_mentor_submissions', []);
+      const updated = [...existing, submission];
+      safeSetStorage('watercolor_mentor_submissions', updated);
+      console.log('✅ Saved to localStorage');
+    } catch (localError) {
+      console.warn('localStorage save failed:', localError);
+      // ยังดำเนินการต่อ
+    }
+
+    // 3. บันทึกลง Firestore (ถ้ามีการ authentication)
+    try {
+      const { auth } = await import('../lib/firebase');
+      const { saveSubmissionToFirestore } = await import('../lib/firebase');
+      
+      const user = auth.currentUser;
+      if (user?.uid) {
+        const success = await saveSubmissionToFirestore(user.uid, submission);
+        if (success) {
+          console.log('✅ Saved to Firestore');
+        } else {
+          console.log('⚠️ Firestore save returned false');
+        }
+      } else {
+        console.log('ℹ️ No authenticated user, skipping Firestore');
+      }
+    } catch (firestoreError) {
+      console.warn('Firestore save failed:', firestoreError);
+      // ยังดำเนินการต่อ
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Failed to save full submission:', error);
+    return false;
+  }
+}
+
+// 🔥 ฟังก์ชันใหม่: ตรวจสอบสถานะ storage
+export async function checkStorageHealth(): Promise<{
+  localStorage: boolean;
+  indexedDB: boolean;
+  firebaseStorage: boolean;
+}> {
+  const results = {
+    localStorage: false,
+    indexedDB: false,
+    firebaseStorage: false,
+  };
+
+  try {
+    // Test localStorage
+    const testKey = 'watercolor_storage_test';
+    localStorage.setItem(testKey, 'test');
+    results.localStorage = localStorage.getItem(testKey) === 'test';
+    localStorage.removeItem(testKey);
+  } catch {
+    results.localStorage = false;
+  }
+
+  try {
+    // Test IndexedDB
+    const db = indexedDB.open('test_db', 1);
+    results.indexedDB = true;
+    db.onerror = () => { results.indexedDB = false; };
+  } catch {
+    results.indexedDB = false;
+  }
+
+  try {
+    // Test Firebase Storage (lightweight test)
+    const { getApps } = await import('firebase/app');
+    results.firebaseStorage = getApps().length > 0;
+  } catch {
+    results.firebaseStorage = false;
+  }
+
+  return results;
+}
+
+// 🔥 ฟังก์ชันใหม่: ดึงข้อมูลจากทุกแหล่ง
+export async function getAllSubmissions(userId?: string): Promise<Submission[]> {
+  const allSubmissions: Submission[] = [];
+
+  try {
+    // 1. จาก localStorage
+    const localSubs = safeGetStorage<Submission[]>('watercolor_mentor_submissions', []);
+    allSubmissions.push(...localSubs);
+    console.log(`📁 Loaded ${localSubs.length} submissions from localStorage`);
+  } catch (error) {
+    console.warn('Failed to load from localStorage:', error);
+  }
+
+  try {
+    // 2. จาก IndexedDB (ถ้ามี)
+    const { loadSubmissionsFromIdb } = await import('./indexedDb');
+    const idbSubs = await loadSubmissionsFromIdb();
+    allSubmissions.push(...idbSubs);
+    console.log(`💾 Loaded ${idbSubs.length} submissions from IndexedDB`);
+  } catch (error) {
+    console.warn('Failed to load from IndexedDB:', error);
+  }
+
+  try {
+    // 3. จาก Firestore (ถ้ามี userId)
+    if (userId) {
+      const { loadSubmissionsFromFirestore } = await import('../lib/firebase');
+      const firestoreSubs = await loadSubmissionsFromFirestore(userId);
+      allSubmissions.push(...firestoreSubs);
+      console.log(`☁️ Loaded ${firestoreSubs.length} submissions from Firestore`);
+    }
+  } catch (error) {
+    console.warn('Failed to load from Firestore:', error);
+  }
+
+  // ลบรายการซ้ำ (โดยใช้ id + createdAt)
+  const uniqueSubmissions = Array.from(
+    new Map(
+      allSubmissions
+        .filter(s => s.id && s.lessonId)
+        .map(s => [`${s.id}-${s.createdAt}`, s])
+    ).values()
+  );
+
+  // เรียงลำดับตามวันที่สร้าง
+  uniqueSubmissions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  console.log(`🎯 Total unique submissions: ${uniqueSubmissions.length}`);
+  return uniqueSubmissions;
+}
+
+// ฟังก์ชันเดิม (ไม่แก้ไข)
 export function safeGetStorage<T>(key: string, defaultValue: T): T {
   try {
     if (typeof window === 'undefined' || !window.localStorage) {
@@ -225,5 +477,40 @@ export function safeRemoveStorage(key: string): void {
     }
   } catch (err) {
     console.warn(`[Storage] Failed to remove key "${key}":`, err);
+  }
+}
+
+// 🔥 ฟังก์ชันใหม่: ลบข้อมูลเก่า
+export function cleanupOldStorage(keepLastNDays = 30): void {
+  try {
+    const now = Date.now();
+    const cutoff = now - (keepLastNDays * 24 * 60 * 60 * 1000);
+    
+    // ลบ fallback submissions เก่า
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('watercolor_fallback_')) {
+        try {
+          const timestamp = parseInt(key.replace('watercolor_fallback_', ''));
+          if (timestamp < cutoff) {
+            keysToRemove.push(key);
+          }
+        } catch {
+          // ถ้าพาร์สไม่ได้ ให้ข้าม
+        }
+      }
+    }
+    
+    keysToRemove.forEach(key => {
+      localStorage.removeItem(key);
+      console.log(`🧹 Cleaned up old backup: ${key}`);
+    });
+    
+    if (keysToRemove.length > 0) {
+      console.log(`🧹 Total cleaned: ${keysToRemove.length} old backups`);
+    }
+  } catch (error) {
+    console.warn('Cleanup failed:', error);
   }
 }
