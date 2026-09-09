@@ -1,3 +1,4 @@
+// src/components/SystemStatusModal.tsx
 import React from 'react';
 import { X, Check, AlertCircle, CloudOff, WifiOff } from 'lucide-react';
 
